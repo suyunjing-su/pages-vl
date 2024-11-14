@@ -51,127 +51,67 @@ async function writeFirstChunk(writableStream, firstChunk) {
 	writer.releaseLock();
 }
 
-
 /** @type {Object.<string, (...args: any[]) => import('./worker-neo').OutboundHandler>} */
 const outboundImpl = {
-    'freedom': () => async (vlessRequest, context) => {
-        // DNS 查询目标地址是否属于 Cloudflare IP 范围
-        async function isCloudflareIP(address) {
-			const dnsServer = 'https://dns.google/resolve'; // 使用 Google 的公共 DNS-over-HTTPS 服务
-			const url = `${dnsServer}?name=${address}&type=A`;
-		
-			try {
-				// 发起 DoH 请求，解析域名的 A 记录
-				const response = await fetch(url);
-				const dnsResponse = await response.json();
-		
-				if (!dnsResponse || !dnsResponse.Answer) {
-					return false;
-				}
-		
-				// 取第一个 A 记录的 IP
-				const ip = dnsResponse.Answer[0].data;
-		
-				// Cloudflare IP 范围列表（可根据实际需求扩展）
-				const cloudflareRanges = [
-					{ start: '173.245.48.0', end: '173.245.63.255' }, // 示例 Cloudflare IP 范围
-					{ start: '103.21.244.0', end: '103.21.247.255' }, // 示例 Cloudflare IP 范围
-					{ start: '103.22.200.0', end: '103.22.203.255' }, // 示例 Cloudflare IP 范围
-					{ start: '103.31.4.0', end: '103.31.7.255' }, // 示例 Cloudflare IP 范围
-					{ start: '141.101.64.0', end: '141.101.127.255' }, // 示例 Cloudflare IP 范围
-					{ start: '108.162.192.0', end: '108.162.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '190.93.240.0', end: '190.93.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '188.114.96.0', end: '188.114.111.255' }, // 示例 Cloudflare IP 范围
-					{ start: '197.234.240.0', end: '197.234.243.255' }, // 示例 Cloudflare IP 范围
-					{ start: '198.41.128.0', end: '198.41.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '162.158.0.0', end: '162.159.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '104.16.0.0', end: '104.23.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '104.24.0.0', end: '104.27.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '172.64.0.0', end: '172.71.255.255' }, // 示例 Cloudflare IP 范围
-					{ start: '131.0.72.0', end: '131.0.75.255' }, // 示例 Cloudflare IP 范围
-				];
-		
-				// 检查 IP 是否在 Cloudflare IP 范围内
-				for (const range of cloudflareRanges) {
-					if (ip >= range.start && ip <= range.end) {
-						return true;
-					}
-				}
-			} catch (error) {
-				console.error(`DNS 查询失败: ${error}`);
-			}
-			return false;
+	'freedom': () => async (vlessRequest, context) => {
+		if (context.enforceUDP) {
+			// TODO: Check what will happen if addressType == VlessAddrType.DomainName and that domain only resolves to a IPv6
+			const udpClient = await /** @type {NonNullable<typeof platformAPI.associate>} */(platformAPI.associate)(vlessRequest.addressType == VlessAddrType.IPv6);
+			const writableStream = makeWritableUDPStream(udpClient, vlessRequest.addressRemote, vlessRequest.portRemote, context.log);
+			const readableStream = makeReadableUDPStream(udpClient, context.log);
+			context.log(`Connected to UDP://${vlessRequest.addressRemote}:${vlessRequest.portRemote}`);
+			await writeFirstChunk(writableStream, context.firstChunk);
+			return {
+				readableStream,
+				writableStream: /** @type {WritableStream<Uint8Array>} */ (writableStream)
+			};
 		}
 
-        // 判断是否需要使用 fetch
-        const useFetch = await isCloudflareIP(vlessRequest.addressRemote);
-        
-		if (useFetch) {
-            // 构建请求 URL，支持 HTTP 和 HTTPS
-            const protocol = vlessRequest.isHttps ? 'https' : 'http';
-            const url = `${protocol}://${vlessRequest.addressRemote}:${vlessRequest.portRemote}${vlessRequest.path || ''}`;
-            context.log(`通过 fetch 连接到 ${url}`);
+		let addressTCP = vlessRequest.addressRemote;
+		if (context.forwardDNS) {
+			addressTCP = globalConfig.dnsTCPServer;
+			context.log(`Redirect DNS request sent to UDP://${vlessRequest.addressRemote}:${vlessRequest.portRemote}`);
+		}
 
-            // 获取客户端的标头并创建新的 Headers 对象
-            const headers = new Headers();
-            Object.entries(vlessRequest.headers).forEach(([key, value]) => {
-                headers.set(key, value);
-            });
+		const tcpSocket = await platformAPI.connect(addressTCP, vlessRequest.portRemote);
+		tcpSocket.closed.catch(error => context.log('[freedom] tcpSocket closed with error: ', error.message));
+		context.log(`Connecting to tcp://${addressTCP}:${vlessRequest.portRemote}`);
+		await writeFirstChunk(tcpSocket.writable, context.firstChunk);
+		return {
+			readableStream: tcpSocket.readable, 
+			writableStream: tcpSocket.writable
+		};
+	},
 
-            // 使用 fetch 发起请求，将请求方法、标头和客户端数据传递给目标服务器
-            const response = await fetch(url, {
-                method: vlessRequest.method || 'GET',
-                headers: headers,
-                body: vlessRequest.method === 'POST' ? vlessRequest.body : null, // 根据请求方法传递数据
-                redirect: 'follow' // 支持重定向
-            });
+	'forward': (/** @type {import('./worker-neo').ForwardInstanceArgs} */ args) => async (vlessRequest, context) => {
+		let portDest = vlessRequest.portRemote;
+		if (typeof args.portMap === "object" && args.portMap[vlessRequest.portRemote] !== undefined) {
+			portDest = args.portMap[vlessRequest.portRemote];
+		}
 
-            // 返回响应，确保将响应流和响应标头传递给客户端
-            return {
-                readableStream: response.body,
-                writableStream: new WritableStream(), // 这里保留简单的写入流，根据需要进一步处理
-                responseHeaders: response.headers // 将目标服务器的响应头传回客户端
-            };
-        } else {
-            // 非 Cloudflare 站点继续使用 TCP socket 连接
-            const tcpSocket = await platformAPI.connect(vlessRequest.addressRemote, vlessRequest.portRemote);
-            await writeFirstChunk(tcpSocket.writable, context.firstChunk);
-            return {
-                readableStream: tcpSocket.readable,
-                writableStream: tcpSocket.writable
-            };
-        }
-    },
+		const tcpSocket = await platformAPI.connect(args.proxyServer, portDest);
+		tcpSocket.closed.catch(error => context.log('[forward] tcpSocket closed with error: ', error.message));
+		context.log(`Forwarding tcp://${vlessRequest.addressRemote}:${vlessRequest.portRemote} to ${args.proxyServer}:${portDest}`);
+		await writeFirstChunk(tcpSocket.writable, context.firstChunk);
+		return {
+			readableStream: tcpSocket.readable, 
+			writableStream: tcpSocket.writable
+		};
+	},
 
-    // 保留原始的其他处理器代码
-    'forward': (/** @type {import('./worker-neo').ForwardInstanceArgs} */ args) => async (vlessRequest, context) => {
-        let portDest = vlessRequest.portRemote;
-        if (typeof args.portMap === "object" && args.portMap[vlessRequest.portRemote] !== undefined) {
-            portDest = args.portMap[vlessRequest.portRemote];
-        }
-
-        const tcpSocket = await platformAPI.connect(args.proxyServer, portDest);
-        tcpSocket.closed.catch(error => context.log('[forward] tcpSocket closed with error: ', error.message));
-        context.log(`Forwarding tcp://${vlessRequest.addressRemote}:${vlessRequest.portRemote} to ${args.proxyServer}:${portDest}`);
-        await writeFirstChunk(tcpSocket.writable, context.firstChunk);
-        return {
-            readableStream: tcpSocket.readable, 
-            writableStream: tcpSocket.writable
-        };
-    },
-
-    // 保留原始的其他处理器代码
-    'socks': (/** @type {import('./worker-neo').Socks5InstanceArgs} */ socks) => async (vlessRequest, context) => {
-        const tcpSocket = await platformAPI.connect(socks.address, socks.port);
-        tcpSocket.closed.catch(error => context.log('[socks] tcpSocket closed with error: ', error.message));
-        context.log(`Connecting to ${vlessRequest.isUDP ? 'UDP' : 'TCP'}://${vlessRequest.addressRemote}:${vlessRequest.portRemote} via socks5 ${socks.address}:${socks.port}`);
-        await socks5Connect(tcpSocket, socks.user, socks.pass, vlessRequest.addressType, vlessRequest.addressRemote, vlessRequest.portRemote, context.log);
-        await writeFirstChunk(tcpSocket.writable, context.firstChunk);
-        return {
-            readableStream: tcpSocket.readable, 
-            writableStream: tcpSocket.writable
-        };
-    },
+	// TODO: known problem, if we send an unreachable request to a valid socks5 server, it will wait indefinitely
+	// TODO: Add support for proxying UDP via socks5 on runtimes that support UDP outbound
+	'socks': (/** @type {import('./worker-neo').Socks5InstanceArgs} */ socks) => async (vlessRequest, context) => {
+		const tcpSocket = await platformAPI.connect(socks.address, socks.port);
+		tcpSocket.closed.catch(error => context.log('[socks] tcpSocket closed with error: ', error.message));
+		context.log(`Connecting to ${vlessRequest.isUDP ? 'UDP' : 'TCP'}://${vlessRequest.addressRemote}:${vlessRequest.portRemote} via socks5 ${socks.address}:${socks.port}`);
+		await socks5Connect(tcpSocket, socks.user, socks.pass, vlessRequest.addressType, vlessRequest.addressRemote, vlessRequest.portRemote, context.log);
+		await writeFirstChunk(tcpSocket.writable, context.firstChunk);
+		return {
+			readableStream: tcpSocket.readable, 
+			writableStream: tcpSocket.writable
+		};
+	},
 
 	/**
 	 * Start streaming traffic to a remote vless server.

@@ -51,35 +51,6 @@ async function writeFirstChunk(writableStream, firstChunk) {
 	writer.releaseLock();
 }
 
-// 定义全局的 isCloudflareIP 辅助函数
-async function isCloudflareIP(address) {
-    const dnsResponse = await platformAPI.dnsLookup(address, globalConfig.dnsTCPServer);
-    const cloudflareRanges = [
-        { start: '173.245.48.0', end: '173.245.63.255' }, // 示例 Cloudflare IP 范围
-        { start: '103.21.244.0', end: '103.21.247.255' }, // 示例 Cloudflare IP 范围
-        { start: '103.22.200.0', end: '103.22.203.255' }, // 示例 Cloudflare IP 范围
-        { start: '103.31.4.0', end: '103.31.7.255' }, // 示例 Cloudflare IP 范围
-        { start: '141.101.64.0', end: '141.101.127.255' }, // 示例 Cloudflare IP 范围
-        { start: '108.162.192.0', end: '108.162.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '190.93.240.0', end: '190.93.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '188.114.96.0', end: '188.114.111.255' }, // 示例 Cloudflare IP 范围
-        { start: '197.234.240.0', end: '197.234.243.255' }, // 示例 Cloudflare IP 范围
-        { start: '198.41.128.0', end: '198.41.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '162.158.0.0', end: '162.159.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '104.16.0.0', end: '104.23.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '104.24.0.0', end: '104.27.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '172.64.0.0', end: '172.71.255.255' }, // 示例 Cloudflare IP 范围
-        { start: '131.0.72.0', end: '131.0.75.255' }, // 示例 Cloudflare IP 范围
-    ];
-
-    const ip = dnsResponse.answer; // 假设 `answer` 是返回的 IP 地址
-    for (const range of cloudflareRanges) {
-        if (ip >= range.start && ip <= range.end) {
-            return true;
-        }
-    }
-    return false;
-}
 
 /** @type {Object.<string, (...args: any[]) => import('./worker-neo').OutboundHandler>} */
 const outboundImpl = {
@@ -88,8 +59,21 @@ const outboundImpl = {
         async function isCloudflareIP(address) {
             const dnsResponse = await platformAPI.dnsLookup(address, globalConfig.dnsTCPServer);
             const cloudflareRanges = [
-                { start: '104.16.0.0', end: '104.31.255.255' }, // 示例 Cloudflare IP 范围
-                // 这里添加其他 Cloudflare IP 范围
+				{ start: '173.245.48.0', end: '173.245.63.255' }, // 示例 Cloudflare IP 范围
+				{ start: '103.21.244.0', end: '103.21.247.255' }, // 示例 Cloudflare IP 范围
+				{ start: '103.22.200.0', end: '103.22.203.255' }, // 示例 Cloudflare IP 范围
+				{ start: '103.31.4.0', end: '103.31.7.255' }, // 示例 Cloudflare IP 范围
+				{ start: '141.101.64.0', end: '141.101.127.255' }, // 示例 Cloudflare IP 范围
+				{ start: '108.162.192.0', end: '108.162.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '190.93.240.0', end: '190.93.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '188.114.96.0', end: '188.114.111.255' }, // 示例 Cloudflare IP 范围
+				{ start: '197.234.240.0', end: '197.234.243.255' }, // 示例 Cloudflare IP 范围
+				{ start: '198.41.128.0', end: '198.41.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '162.158.0.0', end: '162.159.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '104.16.0.0', end: '104.23.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '104.24.0.0', end: '104.27.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '172.64.0.0', end: '172.71.255.255' }, // 示例 Cloudflare IP 范围
+				{ start: '131.0.72.0', end: '131.0.75.255' }, // 示例 Cloudflare IP 范围
             ];
 
             const ip = dnsResponse.answer; // 假设 `answer` 是返回的 IP 地址

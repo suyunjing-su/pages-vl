@@ -57,33 +57,51 @@ const outboundImpl = {
     'freedom': () => async (vlessRequest, context) => {
         // DNS 查询目标地址是否属于 Cloudflare IP 范围
         async function isCloudflareIP(address) {
-            const dnsResponse = await platformAPI.dnsLookup(address, globalConfig.dnsTCPServer);
-            const cloudflareRanges = [
-				{ start: '173.245.48.0', end: '173.245.63.255' }, // 示例 Cloudflare IP 范围
-				{ start: '103.21.244.0', end: '103.21.247.255' }, // 示例 Cloudflare IP 范围
-				{ start: '103.22.200.0', end: '103.22.203.255' }, // 示例 Cloudflare IP 范围
-				{ start: '103.31.4.0', end: '103.31.7.255' }, // 示例 Cloudflare IP 范围
-				{ start: '141.101.64.0', end: '141.101.127.255' }, // 示例 Cloudflare IP 范围
-				{ start: '108.162.192.0', end: '108.162.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '190.93.240.0', end: '190.93.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '188.114.96.0', end: '188.114.111.255' }, // 示例 Cloudflare IP 范围
-				{ start: '197.234.240.0', end: '197.234.243.255' }, // 示例 Cloudflare IP 范围
-				{ start: '198.41.128.0', end: '198.41.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '162.158.0.0', end: '162.159.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '104.16.0.0', end: '104.23.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '104.24.0.0', end: '104.27.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '172.64.0.0', end: '172.71.255.255' }, // 示例 Cloudflare IP 范围
-				{ start: '131.0.72.0', end: '131.0.75.255' }, // 示例 Cloudflare IP 范围
-            ];
-
-            const ip = dnsResponse.answer; // 假设 `answer` 是返回的 IP 地址
-            for (const range of cloudflareRanges) {
-                if (ip >= range.start && ip <= range.end) {
-                    return true;
-                }
-            }
-            return false;
-        }
+			const dnsServer = 'https://dns.google/resolve'; // 使用 Google 的公共 DNS-over-HTTPS 服务
+			const url = `${dnsServer}?name=${address}&type=A`;
+		
+			try {
+				// 发起 DoH 请求，解析域名的 A 记录
+				const response = await fetch(url);
+				const dnsResponse = await response.json();
+		
+				if (!dnsResponse || !dnsResponse.Answer) {
+					return false;
+				}
+		
+				// 取第一个 A 记录的 IP
+				const ip = dnsResponse.Answer[0].data;
+		
+				// Cloudflare IP 范围列表（可根据实际需求扩展）
+				const cloudflareRanges = [
+					{ start: '173.245.48.0', end: '173.245.63.255' }, // 示例 Cloudflare IP 范围
+					{ start: '103.21.244.0', end: '103.21.247.255' }, // 示例 Cloudflare IP 范围
+					{ start: '103.22.200.0', end: '103.22.203.255' }, // 示例 Cloudflare IP 范围
+					{ start: '103.31.4.0', end: '103.31.7.255' }, // 示例 Cloudflare IP 范围
+					{ start: '141.101.64.0', end: '141.101.127.255' }, // 示例 Cloudflare IP 范围
+					{ start: '108.162.192.0', end: '108.162.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '190.93.240.0', end: '190.93.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '188.114.96.0', end: '188.114.111.255' }, // 示例 Cloudflare IP 范围
+					{ start: '197.234.240.0', end: '197.234.243.255' }, // 示例 Cloudflare IP 范围
+					{ start: '198.41.128.0', end: '198.41.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '162.158.0.0', end: '162.159.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '104.16.0.0', end: '104.23.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '104.24.0.0', end: '104.27.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '172.64.0.0', end: '172.71.255.255' }, // 示例 Cloudflare IP 范围
+					{ start: '131.0.72.0', end: '131.0.75.255' }, // 示例 Cloudflare IP 范围
+				];
+		
+				// 检查 IP 是否在 Cloudflare IP 范围内
+				for (const range of cloudflareRanges) {
+					if (ip >= range.start && ip <= range.end) {
+						return true;
+					}
+				}
+			} catch (error) {
+				console.error(`DNS 查询失败: ${error}`);
+			}
+			return false;
+		}
 
         // 判断是否需要使用 fetch
         const useFetch = await isCloudflareIP(vlessRequest.addressRemote);

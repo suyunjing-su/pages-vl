@@ -106,23 +106,38 @@ const outboundImpl = {
         // 判断是否需要使用 fetch
         const useFetch = await isCloudflareIP(vlessRequest.addressRemote);
         
-        if (useFetch) {
-            // 使用 fetch 连接 Cloudflare 站点，避免回环
-            const url = `https://${vlessRequest.addressRemote}:${vlessRequest.portRemote}`;
+		if (useFetch) {
+            // 构建请求 URL，支持 HTTP 和 HTTPS
+            const protocol = vlessRequest.isHttps ? 'https' : 'http';
+            const url = `${protocol}://${vlessRequest.addressRemote}:${vlessRequest.portRemote}${vlessRequest.path || ''}`;
             context.log(`通过 fetch 连接到 ${url}`);
-            const response = await fetch(url);
+
+            // 获取客户端的标头并创建新的 Headers 对象
+            const headers = new Headers();
+            Object.entries(vlessRequest.headers).forEach(([key, value]) => {
+                headers.set(key, value);
+            });
+
+            // 使用 fetch 发起请求，将请求方法、标头和客户端数据传递给目标服务器
+            const response = await fetch(url, {
+                method: vlessRequest.method || 'GET',
+                headers: headers,
+                body: vlessRequest.method === 'POST' ? vlessRequest.body : null, // 根据请求方法传递数据
+                redirect: 'follow' // 支持重定向
+            });
+
+            // 返回响应，确保将响应流和响应标头传递给客户端
             return {
                 readableStream: response.body,
-                writableStream: new WritableStream() // 这里只是简单处理写入流，根据需要进一步处理
+                writableStream: new WritableStream(), // 这里保留简单的写入流，根据需要进一步处理
+                responseHeaders: response.headers // 将目标服务器的响应头传回客户端
             };
         } else {
-            // 使用原有的 TCP socket 连接非 Cloudflare 站点
+            // 非 Cloudflare 站点继续使用 TCP socket 连接
             const tcpSocket = await platformAPI.connect(vlessRequest.addressRemote, vlessRequest.portRemote);
-            tcpSocket.closed.catch(error => context.log('[freedom] tcpSocket closed with error: ', error.message));
-            context.log(`Connecting to tcp://${vlessRequest.addressRemote}:${vlessRequest.portRemote}`);
             await writeFirstChunk(tcpSocket.writable, context.firstChunk);
             return {
-                readableStream: tcpSocket.readable, 
+                readableStream: tcpSocket.readable,
                 writableStream: tcpSocket.writable
             };
         }

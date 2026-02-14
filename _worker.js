@@ -133,7 +133,6 @@ async function handleVLESSWebSocket(request) {
       // 获取域名的IPv4地址并转换为NAT64 IPv6地址
       async function getIPv6ProxyAddress(domain) {
         const endpoints = [
-          `https://cloudflare-dns.com/dns-query?name=${domain}&type=A`,
           `https://dns.google/resolve?name=${domain}&type=A`
         ];
 

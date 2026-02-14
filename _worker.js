@@ -132,25 +132,49 @@ async function handleVLESSWebSocket(request) {
 
       // 获取域名的IPv4地址并转换为NAT64 IPv6地址
       async function getIPv6ProxyAddress(domain) {
-        try {
-          const dnsQuery = await fetch(`https://1.1.1.1/dns-query?name=${domain}&type=A`, {
-            headers: {
-              'Accept': 'application/dns-json'
+        const endpoints = [
+          `https://cloudflare-dns.com/dns-query?name=${domain}&type=A`,
+          `https://dns.google/resolve?name=${domain}&type=A`
+        ];
+
+        // Try multiple DoH endpoints to avoid transient non-JSON errors.
+        for (const url of endpoints) {
+          try {
+            const dnsResult = await fetchDnsJson(url);
+            if (dnsResult.Answer && dnsResult.Answer.length > 0) {
+              // 找到第一个A记录
+              const aRecord = dnsResult.Answer.find(record => record.type === 1);
+              if (aRecord) {
+                const ipv4Address = aRecord.data;
+                return convertToNAT64IPv6(ipv4Address);
+              }
             }
-          });
-          
-          const dnsResult = await dnsQuery.json();
-          if (dnsResult.Answer && dnsResult.Answer.length > 0) {
-            // 找到第一个A记录
-            const aRecord = dnsResult.Answer.find(record => record.type === 1);
-            if (aRecord) {
-              const ipv4Address = aRecord.data;
-              return convertToNAT64IPv6(ipv4Address);
-            }
+          } catch (err) {
+            console.error('DNS解析失败:', err.message);
           }
-          throw new Error('无法解析域名的IPv4地址');
+        }
+
+        throw new Error('无法解析域名的IPv4地址');
+      }
+
+      async function fetchDnsJson(url) {
+        const resp = await fetch(url, {
+          headers: {
+            'Accept': 'application/dns-json'
+          }
+        });
+        const bodyText = await resp.text();
+
+        if (!resp.ok) {
+          const snippet = bodyText.slice(0, 120);
+          throw new Error(`DoH响应错误: ${resp.status} ${snippet}`);
+        }
+
+        try {
+          return JSON.parse(bodyText);
         } catch (err) {
-          throw new Error(`DNS解析失败: ${err.message}`);
+          const snippet = bodyText.slice(0, 120);
+          throw new Error(`DoH解析失败: ${snippet}`);
         }
       }
 

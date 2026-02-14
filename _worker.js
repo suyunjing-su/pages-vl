@@ -203,12 +203,6 @@ async function buildOutboundAttempts(vlessRequest, rawClientData, log) {
         handler: () => vlessOutboundConnect(vlessOutbound, vlessRequest, rawClientData, log),
       });
     }
-    if (socksOutbound) {
-      attempts.push({
-        name: 'socks5',
-        handler: () => socksOutboundConnect(socksOutbound, vlessRequest, rawClientData, log),
-      });
-    }
     return attempts;
   }
 

@@ -178,21 +178,10 @@ async function handleVLESSWebSocket(request) {
       }
 
       // 重试函数 - 使用动态NAT64 IPv6地址
-      async function retry() {
+      async function retryDomainNat64() {
         try {
-          let proxyIP;
-          
-          // 检查是否为IPv4地址格式
-          const ipv4Regex = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-          if (ipv4Regex.test(result.addressRemote)) {
-            // 直接将IPv4地址转换为NAT64 IPv6
-            proxyIP = convertToNAT64IPv6(result.addressRemote);
-            console.log(`直接访问IPv4地址，转换为NAT64 IPv6: ${proxyIP}`);
-          } else {
-            // 域名解析后转换
-            proxyIP = await getIPv6ProxyAddress(result.addressRemote);
-            console.log(`域名解析后转换为NAT64 IPv6: ${proxyIP}`);
-          }
+          const proxyIP = await getIPv6ProxyAddress(result.addressRemote);
+          console.log(`域名解析后转换为NAT64 IPv6: ${proxyIP}`);
           
           console.log(`尝试通过NAT64 IPv6地址 ${proxyIP} 连接...`);
           const tcpSocket = await connect({
@@ -219,12 +208,57 @@ async function handleVLESSWebSocket(request) {
         }
       }
 
-      try {
-        const tcpSocket = await connectAndWrite(result.addressRemote, result.portRemote);
-        pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, retry);
-      } catch (err) {
-        console.error('连接失败:', err);
-        serverWS.close(1011, '连接失败');
+      function isIPv4Address(value) {
+        return /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
+      }
+
+      function isIPv6Address(value) {
+        return /^[0-9a-fA-F:]+$/.test(value) && value.includes(':');
+      }
+
+      async function connectIPv4WithFallback() {
+        try {
+          const tcpSocket = await connectAndWrite(result.addressRemote, result.portRemote);
+          pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, null);
+        } catch (err) {
+          console.error('IPv4直连失败，尝试NAT64:', err);
+          try {
+            const proxyIP = convertToNAT64IPv6(result.addressRemote);
+            const tcpSocket = await connectAndWrite(proxyIP, result.portRemote);
+            pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, null);
+          } catch (natErr) {
+            console.error('NAT64 IPv6连接失败:', natErr);
+            serverWS.close(1011, '连接失败');
+          }
+        }
+      }
+
+      async function connectIPv6Direct() {
+        try {
+          const tcpSocket = await connectAndWrite(result.addressRemote, result.portRemote);
+          pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, null);
+        } catch (err) {
+          console.error('IPv6直连失败:', err);
+          serverWS.close(1011, '连接失败');
+        }
+      }
+
+      async function connectDomainWithRetry() {
+        try {
+          const tcpSocket = await connectAndWrite(result.addressRemote, result.portRemote);
+          pipeRemoteToWebSocket(tcpSocket, serverWS, vlessRespHeader, retryDomainNat64);
+        } catch (err) {
+          console.error('连接失败:', err);
+          serverWS.close(1011, '连接失败');
+        }
+      }
+
+      if (isIPv4Address(result.addressRemote)) {
+        await connectIPv4WithFallback();
+      } else if (isIPv6Address(result.addressRemote)) {
+        await connectIPv6Direct();
+      } else {
+        await connectDomainWithRetry();
       }
     },
     close() {
